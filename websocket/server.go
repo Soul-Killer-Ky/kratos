@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"github.com/go-kratos/kratos/v2"
+	"github.com/gorilla/mux"
 	encoding2 "github.com/tx7do/kratos-transport/broker"
 	"net"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"github.com/go-kratos/kratos/v2/encoding"
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/go-kratos/kratos/v2/transport"
+	http2 "github.com/go-kratos/kratos/v2/transport/http"
 	ws "github.com/gorilla/websocket"
 )
 
@@ -99,8 +102,23 @@ func (s *Server) init(opts ...ServerOption) {
 	s.Server = &http.Server{
 		TLSConfig: s.tlsConf,
 	}
+	router := mux.NewRouter()
+	router.HandleFunc(s.path, s.wsHandler)
 
-	http.HandleFunc(s.path, s.wsHandler)
+	httpSrv := http2.NewServer(http2.Address(s.Addr))
+	httpSrv.HandlePrefix("/", router)
+
+	app := kratos.New(
+		kratos.Name("ws"),
+		kratos.Server(
+			httpSrv,
+		),
+	)
+	if err := app.Run(); err != nil {
+		log.Error("[websocket] run exception:", err)
+	}
+
+	//http.HandleFunc(s.path, s.wsHandler)
 }
 
 func (s *Server) SessionCount() int {
