@@ -1,3 +1,0 @@
-# kratos-websocket
-
-kratos websocket
