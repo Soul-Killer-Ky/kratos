@@ -2,9 +2,9 @@ package websocket
 
 import (
 	"crypto/tls"
-	"github.com/go-kratos/kratos/v2/encoding"
-	"net"
 	"time"
+
+	"github.com/go-kratos/kratos/v2/encoding"
 )
 
 type ServerOption func(o *Server)
@@ -45,17 +45,17 @@ func WithTLSConfig(c *tls.Config) ServerOption {
 	}
 }
 
-func WithListener(lis net.Listener) ServerOption {
-	return func(s *Server) {
-		s.lis = lis
-	}
-}
-
 func WithCodec(c string) ServerOption {
 	return func(s *Server) {
 		s.codec = encoding.GetCodec(c)
 	}
 }
+
+//func WithMiddleware(m http.ServerOption) ServerOption {
+//	return func(s *Server) {
+//		s.middleware = m
+//	}
+//}
 
 ////////////////////////////////////////////////////////////////////////////////
 
