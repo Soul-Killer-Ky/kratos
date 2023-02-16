@@ -10,16 +10,21 @@ const channelBufSize = 256
 
 type SessionID string
 
+type BusinessID interface{}
+
 type Session struct {
-	id     SessionID
-	conn   *ws.Conn
-	send   chan []byte
-	server *Server
+	id         SessionID
+	businessID BusinessID
+	conn       *ws.Conn
+	send       chan []byte
+	server     *Server
 }
 
 type SessionMap map[SessionID]*Session
 
-func NewSession(conn *ws.Conn, server *Server) *Session {
+type BusinessSession map[BusinessID][]SessionID
+
+func NewSession(conn *ws.Conn, server *Server, bid BusinessID) *Session {
 	if conn == nil {
 		panic("conn cannot be nil")
 	}
@@ -27,10 +32,11 @@ func NewSession(conn *ws.Conn, server *Server) *Session {
 	u1, _ := uuid.NewUUID()
 
 	c := &Session{
-		id:     SessionID(u1.String()),
-		conn:   conn,
-		send:   make(chan []byte, channelBufSize),
-		server: server,
+		id:         SessionID(u1.String()),
+		businessID: bid,
+		conn:       conn,
+		send:       make(chan []byte, channelBufSize),
+		server:     server,
 	}
 
 	return c
@@ -42,6 +48,10 @@ func (c *Session) Conn() *ws.Conn {
 
 func (c *Session) SessionID() SessionID {
 	return c.id
+}
+
+func (c *Session) BusinessID() BusinessID {
+	return c.businessID
 }
 
 func (c *Session) SendMessage(message []byte) {
@@ -116,7 +126,7 @@ func (c *Session) readPump() {
 		case ws.CloseMessage:
 			return
 		case ws.BinaryMessage:
-			_ = c.server.messageHandler(c.SessionID(), data)
+			_ = c.server.messageHandler(c, data)
 			break
 		case ws.PingMessage:
 			if err := c.sendPongMessage(""); err != nil {

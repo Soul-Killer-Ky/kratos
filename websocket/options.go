@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"crypto/tls"
+	"github.com/go-kratos/kratos/v2/transport/http"
 	"time"
 
 	"github.com/go-kratos/kratos/v2/encoding"
@@ -51,11 +52,17 @@ func WithCodec(c string) ServerOption {
 	}
 }
 
-//func WithMiddleware(m http.ServerOption) ServerOption {
-//	return func(s *Server) {
-//		s.middleware = m
-//	}
-//}
+func WithMiddleware(m http.ServerOption) ServerOption {
+	return func(s *Server) {
+		s.middleware = m
+	}
+}
+
+func WithBusinessIDFunc(f BusinessIDFunc) ServerOption {
+	return func(s *Server) {
+		s.businessIDFunc = f
+	}
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -70,5 +77,11 @@ func WithClientCodec(c string) ClientOption {
 func WithEndpoint(uri string) ClientOption {
 	return func(o *Client) {
 		o.url = uri
+	}
+}
+
+func WithRequestHeader(key, value string) ClientOption {
+	return func(o *Client) {
+		o.header.Add(key, value)
 	}
 }

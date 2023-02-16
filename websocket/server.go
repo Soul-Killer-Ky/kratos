@@ -4,26 +4,22 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"github.com/Soul-Killer-Ky/kratos/internal/matcher"
-	"github.com/gorilla/mux"
-	encoding2 "github.com/tx7do/kratos-transport/broker"
-	"net"
-	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/go-kratos/kratos/v2/encoding"
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/go-kratos/kratos/v2/transport"
+	"github.com/go-kratos/kratos/v2/transport/http"
 	ws "github.com/gorilla/websocket"
+	encoding2 "github.com/tx7do/kratos-transport/broker"
 )
 
 type Binder func() Any
 
 type ConnectHandler func(SessionID, bool)
 
-type MessageHandler func(SessionID, MessagePayload) error
+type MessageHandler func(*Session, MessagePayload) error
 
 type HandlerData struct {
 	Handler MessageHandler
@@ -31,23 +27,24 @@ type HandlerData struct {
 }
 type MessageHandlerMap map[MessageType]HandlerData
 
+type BusinessIDFunc func(context.Context) interface{}
+
 var (
-	_ transport.Server     = (*Server)(nil)
-	_ transport.Endpointer = (*Server)(nil)
+	_ transport.Server = (*Server)(nil)
 )
 
 type Server struct {
-	*http.Server
-
-	lis      net.Listener
+	httpSrv  *http.Server
 	tlsConf  *tls.Config
 	upgrader *ws.Upgrader
 
-	network     string
-	address     string
-	path        string
-	strictSlash bool
-	endpoint    *url.URL
+	network        string
+	address        string
+	path           string
+	strictSlash    bool
+	endpoint       *url.URL
+	middleware     http.ServerOption
+	businessIDFunc BusinessIDFunc
 
 	timeout time.Duration
 
@@ -57,17 +54,10 @@ type Server struct {
 	messageHandlers MessageHandlerMap
 	connectHandler  ConnectHandler
 
-	sessions   SessionMap
-	register   chan *Session
-	unregister chan *Session
-
-	middleware matcher.Matcher
-	decVars    DecodeRequestFunc
-	decQuery   DecodeRequestFunc
-	decBody    DecodeRequestFunc
-	enc        EncodeResponseFunc
-	ene        EncodeErrorFunc
-	router     *mux.Router
+	sessions         SessionMap
+	businessSessions BusinessSession
+	register         chan *Session
+	unregister       chan *Session
 }
 
 func NewServer(opts ...ServerOption) *Server {
@@ -79,7 +69,8 @@ func NewServer(opts ...ServerOption) *Server {
 
 		messageHandlers: make(MessageHandlerMap),
 
-		sessions: SessionMap{},
+		sessions:         SessionMap{},
+		businessSessions: BusinessSession{},
 		upgrader: &ws.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -89,10 +80,7 @@ func NewServer(opts ...ServerOption) *Server {
 		register:   make(chan *Session),
 		unregister: make(chan *Session),
 	}
-
 	srv.init(opts...)
-
-	srv.err = srv.listen()
 
 	return srv
 }
@@ -106,11 +94,11 @@ func (s *Server) init(opts ...ServerOption) {
 		o(s)
 	}
 
-	s.Server = &http.Server{
-		TLSConfig: s.tlsConf,
-	}
+	httpSrv := http.NewServer(http.Address(s.address), s.middleware)
+	router := httpSrv.Route("/")
+	router.GET(s.path, s.wsHandler)
 
-	http.HandleFunc(s.path, s.wsHandler)
+	s.httpSrv = httpSrv
 }
 
 func (s *Server) SessionCount() int {
@@ -164,6 +152,18 @@ func (s *Server) SendMessage(sessionId SessionID, messageType MessageType, messa
 	c.SendMessage(buf)
 }
 
+func (s *Server) SendMessageByBID(bid interface{}, messageType MessageType, message MessagePayload) {
+	log.Infof("bss: %v, ss: %v, bid: %v", s.businessSessions, s.sessions, bid)
+	sids, ok := s.businessSessions[bid]
+	if !ok {
+		log.Info("sbid fail")
+		return
+	}
+	for _, sid := range sids {
+		s.SendMessage(sid, messageType, message)
+	}
+}
+
 func (s *Server) Broadcast(messageType MessageType, message MessagePayload) {
 	buf, err := s.marshalMessage(messageType, message)
 	if err != nil {
@@ -176,7 +176,7 @@ func (s *Server) Broadcast(messageType MessageType, message MessagePayload) {
 	}
 }
 
-func (s *Server) messageHandler(sessionId SessionID, buf []byte) error {
+func (s *Server) messageHandler(session *Session, buf []byte) error {
 	var msg Message
 	if err := msg.Unmarshal(buf); err != nil {
 		log.Errorf("[websocket] decode message exception: %s", err)
@@ -202,7 +202,7 @@ func (s *Server) messageHandler(sessionId SessionID, buf []byte) error {
 		return err
 	}
 
-	if err := handlerData.Handler(sessionId, payload); err != nil {
+	if err := handlerData.Handler(session, payload); err != nil {
 		log.Errorf("[websocket] message handler exception: %s", err)
 		return err
 	}
@@ -210,52 +210,31 @@ func (s *Server) messageHandler(sessionId SessionID, buf []byte) error {
 	return nil
 }
 
-func (s *Server) wsHandler(res http.ResponseWriter, req *http.Request) {
-	conn, err := s.upgrader.Upgrade(res, req, nil)
-	if err != nil {
-		log.Error("[websocket] upgrade exception:", err)
-		return
-	}
-
-	session := NewSession(conn, s)
-	session.server.register <- session
-
-	session.Listen()
-}
-
-func (s *Server) listen() error {
-	if s.lis == nil {
-		lis, err := net.Listen(s.network, s.address)
+func (s *Server) wsHandler(ctx http.Context) error {
+	h := ctx.Middleware(func(ctx2 context.Context, req interface{}) (interface{}, error) {
+		response, request := ctx.Response(), ctx.Request()
+		conn, err := s.upgrader.Upgrade(response, request, nil)
 		if err != nil {
-			return err
+			log.Error("[websocket] upgrade exception:", err)
+			return nil, err
 		}
-		s.lis = lis
+		var bid BusinessID
+		if s.businessIDFunc != nil {
+			bid = s.businessIDFunc(ctx2)
+		}
+		session := NewSession(conn, s, bid)
+		session.server.register <- session
+		session.Listen()
+
+		return nil, nil
+	})
+	_, err := h(ctx, ctx.Request())
+	if err != nil {
+		log.Error("[websocket] handle exception:", err)
+		return err
 	}
-
-	addr := s.address
-
-	prefix := "ws://"
-	if s.tlsConf == nil {
-		if !strings.HasPrefix(addr, "ws://") {
-			prefix = "ws://"
-		}
-	} else {
-		if !strings.HasPrefix(addr, "wss://") {
-			prefix = "wss://"
-		}
-	}
-	addr = prefix + addr
-
-	s.endpoint, s.err = url.Parse(addr)
 
 	return nil
-}
-
-func (s *Server) Endpoint() (*url.URL, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.endpoint, nil
 }
 
 func (s *Server) run() {
@@ -270,36 +249,25 @@ func (s *Server) run() {
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	if s.err != nil {
-		return s.err
-	}
-	s.BaseContext = func(net.Listener) context.Context {
-		return ctx
-	}
-	log.Infof("[websocket] server listening on: %s", s.lis.Addr().String())
+	log.Infof("[websocket] server listening on: %s", s.address)
 
 	go s.run()
 
-	var err error
-	if s.tlsConf != nil {
-		err = s.ServeTLS(s.lis, "", "")
-	} else {
-		err = s.Serve(s.lis)
-	}
-	if !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
+	return s.httpSrv.Start(ctx)
 }
 
 func (s *Server) Stop(ctx context.Context) error {
 	log.Info("[websocket] server stopping")
-	return s.Shutdown(ctx)
+	return s.httpSrv.Stop(ctx)
 }
 
 func (s *Server) addSession(c *Session) {
-	//log.Info("[websocket] add session: ", c.SessionID())
 	s.sessions[c.SessionID()] = c
+	if _, ok := s.businessSessions[c.businessID]; ok {
+		s.businessSessions[c.businessID] = append(s.businessSessions[c.businessID], c.SessionID())
+	} else {
+		s.businessSessions[c.businessID] = []SessionID{c.SessionID()}
+	}
 
 	if s.connectHandler != nil {
 		s.connectHandler(c.SessionID(), true)
@@ -309,11 +277,18 @@ func (s *Server) addSession(c *Session) {
 func (s *Server) removeSession(c *Session) {
 	for k, v := range s.sessions {
 		if c == v {
-			//log.Info("[websocket] remove session: ", c.SessionID())
 			if s.connectHandler != nil {
 				s.connectHandler(c.SessionID(), false)
 			}
 			delete(s.sessions, k)
+			for bk, sid := range s.businessSessions[v.businessID] {
+				if sid == v.SessionID() {
+					s.businessSessions[v.businessID] = append(s.businessSessions[v.businessID][:bk], s.businessSessions[v.businessID][bk+1:]...)
+				}
+			}
+			if len(s.businessSessions[v.businessID]) == 0 {
+				delete(s.businessSessions, v.businessID)
+			}
 			return
 		}
 	}

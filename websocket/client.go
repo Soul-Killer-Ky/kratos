@@ -3,6 +3,7 @@ package websocket
 import (
 	"errors"
 	encoding2 "github.com/tx7do/kratos-transport/broker"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -29,6 +30,7 @@ type Client struct {
 	messageHandlers ClientMessageHandlerMap
 
 	timeout time.Duration
+	header  *http.Header
 }
 
 func NewClient(opts ...ClientOption) *Client {
@@ -37,6 +39,7 @@ func NewClient(opts ...ClientOption) *Client {
 		timeout:         1 * time.Second,
 		codec:           encoding.GetCodec("json"),
 		messageHandlers: make(ClientMessageHandlerMap),
+		header:          &http.Header{},
 	}
 
 	cli.init(opts...)
@@ -59,7 +62,7 @@ func (c *Client) Connect() error {
 
 	log.Infof("[websocket] connecting to %s", c.endpoint.String())
 
-	conn, resp, err := ws.DefaultDialer.Dial(c.endpoint.String(), nil)
+	conn, resp, err := ws.DefaultDialer.Dial(c.endpoint.String(), *c.header)
 	if err != nil {
 		log.Errorf("%s [%v]", err.Error(), resp)
 		return err
