@@ -152,14 +152,14 @@ func (s *Server) SendMessage(sessionId SessionID, messageType MessageType, messa
 	c.SendMessage(buf)
 }
 
-func (s *Server) SendMessageByBID(bid interface{}, messageType MessageType, message MessagePayload) bool {
-	sids, ok := s.businessSessions[bid]
+func (s *Server) SendMessageByBID(businessID interface{}, messageType MessageType, message MessagePayload) bool {
+	sessionIDs, ok := s.businessSessions[businessID]
 	if !ok {
-		log.Errorf("not fond session by business id: %s", bid)
+		log.Errorf("not fond session by business id: %s", businessID)
 		return false
 	}
-	for _, sid := range sids {
-		s.SendMessage(sid, messageType, message)
+	for _, id := range sessionIDs {
+		s.SendMessage(id, messageType, message)
 	}
 	return true
 }
@@ -259,6 +259,11 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) Stop(ctx context.Context) error {
 	log.Info("[websocket] server stopping")
 	return s.httpSrv.Stop(ctx)
+}
+
+func (s *Server) GetSession(sessionID SessionID) (*Session, bool) {
+	session, ok := s.sessions[sessionID]
+	return session, ok
 }
 
 func (s *Server) addSession(c *Session) {
