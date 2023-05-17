@@ -152,16 +152,16 @@ func (s *Server) SendMessage(sessionId SessionID, messageType MessageType, messa
 	c.SendMessage(buf)
 }
 
-func (s *Server) SendMessageByBID(bid interface{}, messageType MessageType, message MessagePayload) {
-	log.Infof("bss: %v, ss: %v, bid: %v", s.businessSessions, s.sessions, bid)
+func (s *Server) SendMessageByBID(bid interface{}, messageType MessageType, message MessagePayload) bool {
 	sids, ok := s.businessSessions[bid]
 	if !ok {
-		log.Info("sbid fail")
-		return
+		log.Errorf("not fond session by business id: %s", bid)
+		return false
 	}
 	for _, sid := range sids {
 		s.SendMessage(sid, messageType, message)
 	}
+	return true
 }
 
 func (s *Server) Broadcast(messageType MessageType, message MessagePayload) {
