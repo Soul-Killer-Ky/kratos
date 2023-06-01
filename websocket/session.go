@@ -1,6 +1,8 @@
 package websocket
 
 import (
+	"net/http"
+
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/google/uuid"
 	ws "github.com/gorilla/websocket"
@@ -18,13 +20,14 @@ type Session struct {
 	conn       *ws.Conn
 	send       chan []byte
 	server     *Server
+	request    *http.Request
 }
 
 type SessionMap map[SessionID]*Session
 
 type BusinessSession map[BusinessID][]SessionID
 
-func NewSession(conn *ws.Conn, server *Server, bid BusinessID) *Session {
+func NewSession(conn *ws.Conn, server *Server, bid BusinessID, request *http.Request) *Session {
 	if conn == nil {
 		panic("conn cannot be nil")
 	}
@@ -37,6 +40,7 @@ func NewSession(conn *ws.Conn, server *Server, bid BusinessID) *Session {
 		conn:       conn,
 		send:       make(chan []byte, channelBufSize),
 		server:     server,
+		request:    request,
 	}
 
 	return c
@@ -52,6 +56,10 @@ func (c *Session) SessionID() SessionID {
 
 func (c *Session) BusinessID() BusinessID {
 	return c.businessID
+}
+
+func (c *Session) Request() *http.Request {
+	return c.request
 }
 
 func (c *Session) SendMessage(message []byte) {

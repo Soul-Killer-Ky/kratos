@@ -27,7 +27,7 @@ type HandlerData struct {
 }
 type MessageHandlerMap map[MessageType]HandlerData
 
-type BusinessIDFunc func(context.Context) interface{}
+type BusinessIDFunc func(context.Context) BusinessID
 
 var (
 	_ transport.Server = (*Server)(nil)
@@ -152,10 +152,10 @@ func (s *Server) SendMessage(sessionId SessionID, messageType MessageType, messa
 	c.SendMessage(buf)
 }
 
-func (s *Server) SendMessageByBID(businessID interface{}, messageType MessageType, message MessagePayload) bool {
+func (s *Server) SendMessageByBID(businessID BusinessID, messageType MessageType, message MessagePayload) bool {
 	sessionIDs, ok := s.businessSessions[businessID]
 	if !ok {
-		log.Errorf("not fond session by business id: %s", businessID)
+		log.Errorf("[websocket] not fond session by business id: %v", businessID)
 		return false
 	}
 	for _, id := range sessionIDs {
@@ -167,7 +167,7 @@ func (s *Server) SendMessageByBID(businessID interface{}, messageType MessageTyp
 func (s *Server) Broadcast(messageType MessageType, message MessagePayload) {
 	buf, err := s.marshalMessage(messageType, message)
 	if err != nil {
-		log.Error(" [websocket] marshal message exception:", err)
+		log.Error("[websocket] marshal message exception:", err)
 		return
 	}
 
@@ -222,7 +222,7 @@ func (s *Server) wsHandler(ctx http.Context) error {
 		if s.businessIDFunc != nil {
 			bid = s.businessIDFunc(ctx2)
 		}
-		session := NewSession(conn, s, bid)
+		session := NewSession(conn, s, bid, request)
 		session.server.register <- session
 		session.Listen()
 

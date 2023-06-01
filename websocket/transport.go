@@ -2,9 +2,8 @@ package websocket
 
 import (
 	"context"
-	"net/http"
-
 	"github.com/go-kratos/kratos/v2/transport"
+	"net/http"
 )
 
 const (
@@ -74,6 +73,16 @@ func SetOperation(ctx context.Context, op string) {
 }
 
 type headerCarrier http.Header
+
+// Add adds the key, value pair to the header
+func (hc headerCarrier) Add(key, value string) {
+	http.Header(hc).Add(key, value)
+}
+
+// Values returns all values associated with the given key.
+func (hc headerCarrier) Values(key string) []string {
+	return http.Header(hc).Values(key)
+}
 
 // Get returns the value associated with the passed key.
 func (hc headerCarrier) Get(key string) string {
