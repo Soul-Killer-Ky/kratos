@@ -153,13 +153,13 @@ func (s *Server) SendMessage(sessionId SessionID, messageType MessageType, messa
 }
 
 func (s *Server) SendMessageByBID(businessID BusinessID, messageType MessageType, message MessagePayload) bool {
-	sessionIDs, ok := s.businessSessions[businessID]
+	sessions, ok := s.businessSessions[businessID]
 	if !ok {
 		log.Errorf("[websocket] not fond session by business id: %v", businessID)
 		return false
 	}
-	for _, id := range sessionIDs {
-		s.SendMessage(id, messageType, message)
+	for _, session := range sessions {
+		s.SendMessage(session.SessionID(), messageType, message)
 	}
 	return true
 }
@@ -266,12 +266,17 @@ func (s *Server) GetSession(sessionID SessionID) (*Session, bool) {
 	return session, ok
 }
 
+func (s *Server) GetSessionsByBusinessID(businessID BusinessID) ([]*Session, bool) {
+	sessions, ok := s.businessSessions[businessID]
+	return sessions, ok
+}
+
 func (s *Server) addSession(c *Session) {
 	s.sessions[c.SessionID()] = c
 	if _, ok := s.businessSessions[c.businessID]; ok {
-		s.businessSessions[c.businessID] = append(s.businessSessions[c.businessID], c.SessionID())
+		s.businessSessions[c.businessID] = append(s.businessSessions[c.businessID], c)
 	} else {
-		s.businessSessions[c.businessID] = []SessionID{c.SessionID()}
+		s.businessSessions[c.businessID] = []*Session{c}
 	}
 
 	if s.connectHandler != nil {
@@ -286,8 +291,8 @@ func (s *Server) removeSession(c *Session) {
 				s.connectHandler(c.SessionID(), false)
 			}
 			delete(s.sessions, k)
-			for bk, sid := range s.businessSessions[v.businessID] {
-				if sid == v.SessionID() {
+			for bk, session := range s.businessSessions[v.businessID] {
+				if session.SessionID() == v.SessionID() {
 					s.businessSessions[v.businessID] = append(s.businessSessions[v.businessID][:bk], s.businessSessions[v.businessID][bk+1:]...)
 				}
 			}

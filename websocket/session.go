@@ -25,7 +25,7 @@ type Session struct {
 
 type SessionMap map[SessionID]*Session
 
-type BusinessSession map[BusinessID][]SessionID
+type BusinessSession map[BusinessID][]*Session
 
 func NewSession(conn *ws.Conn, server *Server, bid BusinessID, request *http.Request) *Session {
 	if conn == nil {
